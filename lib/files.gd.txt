@@ -1,0 +1,80 @@
+############################################################################
+####
+##
+##W  files.gd            Numerical Semigroup Package           Rhett Robinson
+##
+##  Declaration file for functions of the Numerical Semigroup package
+##
+##H @(#)$Id: files.gd,v 0.1 2003/02/10 15:17:10 gap Exp $
+##
+##Y Copyright (C) 2003, Rhett S. Robinson
+##
+Revision.("numericalsemigroup/gap/files_gd"):="0.1.1";
+
+##########################################################################
+## 
+##  Declare the new category and set up some stuff
+##
+DeclareCategory("IsNumericalSemigroup", IsObject);
+DeclareGlobalFunction("NSG");
+
+##########################################################################
+##
+##  Some functions
+##
+DeclareOperation ("NSGAddGenerator", [IsNumericalSemigroup, IsPosInt]);
+DeclareOperation ("NSGIsSubset", [IsNumericalSemigroup, IsNumericalSemigroup]);
+DeclareOperation ("NSGL", [IsNumericalSemigroup]);
+DeclareOperation ("NSGL", [IsNumericalSemigroup, IsPosInt]) ;
+DeclareOperation ("NSGB", [IsNumericalSemigroup]);
+DeclareOperation ("NSGB", [IsNumericalSemigroup, IsPosInt]) ;
+DeclareOperation ("NSGg", [IsNumericalSemigroup]);
+DeclareOperation ("NSGn", [IsNumericalSemigroup]);
+
+DeclareOperation ("NSGBChain", [IsNumericalSemigroup]);
+DeclareOperation ("NSGLChain", [IsNumericalSemigroup]);
+DeclareOperation ("NSGCompareBL", [IsNumericalSemigroup]);
+DeclareOperation ("NSGCompareBL", [IsNumericalSemigroup, IsPosInt]) ;
+DeclareOperation ("NSGComparePrintBL", [IsNumericalSemigroup]);
+DeclareOperation ("NSGComparePrintBL", [IsNumericalSemigroup, IsPosInt]) ;
+
+DeclareOperation ("NSGT", [IsNumericalSemigroup]);
+DeclareOperation ("NSGt", [IsNumericalSemigroup]);
+
+DeclareOperation ("NSGT", [IsNumericalSemigroup, IsInt]) ;
+DeclareOperation ("NSGt", [IsNumericalSemigroup, IsInt]) ;
+DeclareOperation ("NSGS", [IsNumericalSemigroup, IsInt]) ;
+DeclareOperation ("NSGSSequence", [IsNumericalSemigroup]) ;
+DeclareOperation ("NSGTypeSequence", [IsNumericalSemigroup]) ;
+DeclareOperation ("NSGtypesequence", [IsNumericalSemigroup]) ;
+
+DeclareOperation ("NSGIsSymm", [IsNumericalSemigroup]);
+DeclareOperation ("NSGIsPseudoSymm", [IsNumericalSemigroup]);
+
+DeclareOperation ("NSGIsTelescopic", [IsNumericalSemigroup]) ;
+
+DeclareOperation ("\in", [IsInt, IsNumericalSemigroup]);
+DeclareOperation ("\[\]", [IsNumericalSemigroup, IsInt]) ;
+
+
+##########################################################################
+##
+##  Some internal helper functions
+##
+DeclareOperatoin ("NSGICompareBL", [IsNumericalSemigroup, IsBool]);
+DeclareOperatoin ("NSGICompareBL", [IsNumericalSemigroup, IsInt, IsBool]);
+DeclareOperation ("NSGIAddGenerator", [IsNumericalSemigroup, IsPosInt]);
+DeclareOperation ("NSGIfindSemiGroup", [IsNumericalSemigroup]);
+DeclareOperation ("NSGIfindGenerators", [IsNumericalSemigroup]);
+DeclareOperation ("NSGIfindSemiGroupFromSet", [IsNumericalSemigroup]);
+DeclareOperation ("NSGIIsEqual", [IsNumericalSemigroup, IsNumericalSemigroup]);
+DeclareOperation ("NSGICopy", [IsNumericalSemigroup]);
+
+DeclareOperation ("NSGIB", [IsNumericalSemigroup]);
+DeclareOperation ("NSGIL", [IsNumericalSemigroup]);
+
+##########################################################################
+##
+##  Some stuff I am putting here for now but may eventually remove
+##
+DeclareOperation ("NSGIsElement", [IsNumericalSemigroup, IsInt]);

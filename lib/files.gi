@@ -1,0 +1,844 @@
+##########################################################################
+## Implementation
+DeclareRepresentation("IsNumericalSemigroupCompRep", IsComponentObjectRep,
+   ["generators", "elements", "frobenius", "thegcd", "sg_calc", "g_calc",
+    "aset"]);
+NSGType:=NewType(NewFamily ("NSGFamily"), IsNumericalSemigroup and
+   IsNumericalSemigroupCompRep);
+###########################################################################
+##
+#F  NSG ( <mgens> )
+##
+InstallGlobalFunction( NSG,
+   #"method for `NumericalSemigroup'",
+   #[IsSet],
+   function( mgens )
+      local semi, sg, i, it;
+      mgens := Set (mgens) ;
+      # create an empty representation of the semigroup
+      semi := rec (generators:=Set([]), elements:=Set([]), frobenius:=0,
+                   thegcd:=0, sg_calc:=false, g_calc:=false, aset:=Set([]));
+
+      sg := Objectify (NSGType, semi);
+      it := Iterator (mgens);
+      # if no generators were passed, then just return an empty semigroup
+      if Length(mgens) = 0 then return sg ; fi ;
+      # first one zero means we are passing {s0, s1, ..., sn -->} instead of
+      # <a1, a2, ..., ak>
+      if 0 = mgens[1] then
+         for i in mgens do
+            if i > 0 then #skip first one
+               NSGAddGenerator (sg, i) ;
+            fi ;
+         od ;
+         # Here I go from the last element to the last element plus the first
+         # non-zero element, which ensures that the minspan is reached
+         for i in [mgens[Length(mgens)]..mgens[Length(mgens)]+mgens[2]] do
+            if not i in sg then
+               NSGAddGenerator (sg, i) ;
+            fi ;
+         od ;
+         # I call find generators so that it has the proper representation
+         # stored
+         NSGIfindGenerators (sg) ;
+         return sg ;
+      else
+         # otherwise, I just add the passed generators and return the semigroup
+         for i in mgens do
+            NSGAddGenerator (sg, i) ;
+         od ;
+         NSGIfindGenerators (sg) ;
+         return sg ;
+      fi ;
+   end
+);
+# Internal function that just generates a duplicate copy to ensure things
+# aren't messed up...  not entirely sure if it's needed, but I'm being cautious
+# until I understand GAP more thoroughly
+InstallMethod( NSGICopy,
+   [IsNumericalSemigroup],
+   function (sg)
+      local s;
+      s:=NSG([]);
+      s!.generators := ShallowCopy (sg!.generators);
+      s!.elements := ShallowCopy (sg!.elements);
+      s!.frobenius := sg!.frobenius;
+      s!.thegcd := sg!.thegcd;
+      s!.sg_calc := sg!.sg_calc;
+      s!.g_calc := sg!.g_calc;
+      s!.aset := ShallowCopy (sg!.aset);
+      return s;
+   end
+);
+# Adds a generator
+InstallMethod (NSGIAddGenerator,
+   "method for adding generator that does not findSemiGroup",
+   [IsNumericalSemigroup, IsPosInt],
+   function (sg, newg)
+      local g, gens;
+      # simple test to avoid redundancy and overhead for other function calls
+      if newg in sg!.generators then return ; fi ;
+      # Upon adding a generator, the semigroup and set of generators is now
+      # unknown
+      sg!.sg_calc := false;
+      sg!.g_calc := false;
+      gens := Set ([]);
+      # multiply out by the gcd, then add the generator, then divide out the gcd
+      for g in sg!.generators do
+         AddSet (gens, g*sg!.thegcd);
+      od;
+      AddSet (gens, newg);
+      sg!.thegcd := Gcd(gens);
+      sg!.generators := Set([]);
+      AddSet (gens, newg);
+      for g in gens do
+         AddSet (sg!.generators, g/sg!.thegcd);
+      od;
+   end
+);
+# what's usually called, adds a generator then finds the set of generators
+InstallMethod (NSGAddGenerator, 
+   "method for adding generator (keeps semigroup consistent)",
+   [IsNumericalSemigroup, IsPosInt],
+   function (sg, newg)
+      NSGIAddGenerator (sg, newg);
+      NSGIfindSemiGroup(sg);
+   end
+);
+# tests if an element is in the semigroup
+InstallMethod (NSGIsElement, "determines if an integer is an element",
+   [IsNumericalSemigroup, IsInt],
+   function (sg, el)
+      # it must be positive
+      if el < 0 then
+         return false;
+      fi;
+      # the gcd must divide it
+      if el mod sg!.thegcd > 0 then
+         return false;
+      fi;
+      # if the semigroup elements aren't known, find them
+      if not sg!.sg_calc then
+         NSGIfindSemiGroup(sg);
+      fi;
+      # divide out by the gcd to compare it to the reduced form
+      el := el / sg!.thegcd ;
+      # if it's greater than the frobenius it's obviously in there
+      if el > sg!.frobenius then
+         return true;
+      fi;
+      # otherwise if it's in the set of elements it's in there
+      if el in sg!.elements then
+         return true;
+      fi;
+      # it's not in there
+      return false;
+   end
+);
+# takes the generators and finds the semigroup they generate
+InstallMethod (NSGIfindSemiGroup, "fills in elements up to frobenius number",
+   [IsNumericalSemigroup],
+   function (sg)
+      local bound, begin, tsum, sum, index, genlist, genit, addto, setit,
+            g, g1, deg1;
+      # avoid redundant calculations
+      if sg!.sg_calc then
+         return;
+      fi;
+      # no elements
+      if Length(sg!.generators) = 0 then
+         return;
+      fi;
+      # bound is an upper bound on how many elements to generate
+      bound := -1;
+      genit := Iterator(sg!.generators);
+      g := NextIterator(genit);
+      begin := g;
+      
+      # if the first generator is 1, then I can just manually say what
+      # everything is; the semigroup = N
+      if 1 = begin then
+         sg!.generators := Set([1]);
+         sg!.g_calc := true;
+         sg!.elements := Set([0]);
+         sg!.sg_calc := true;
+         sg!.frobenius := -1;
+         sg!.aset := Set([0]);
+         #sg!.thegcd := 1;
+         return ;
+      fi;
+      
+      sum := 0;
+      tsum := 0;
+      index := 0;
+      genlist := Set([]);
+      genit := Iterator (sg!.generators);
+      g1 := Iterator (sg!.generators);
+      # finding sum of the first k elements with gcd 1
+      for deg1 in g1 do
+         AddSet (genlist, deg1);
+         sum := sum + deg1;
+         if Gcd(genlist) = 1 then
+            break ;
+         fi;
+         index := index + 1;
+      od;
+      # frobenius \leq lcm {a1, ..., ak} * k - sum (a1 .. ak) where
+      # gcd {a1, ..., ak} = 1
+      bound := Lcm(genlist) * index - sum ;
+      # grab next generator not a multiple of the first
+      while not IsDoneIterator (genit) and g mod begin = 0 do
+         g := NextIterator (genit);
+      od;
+      # if it's still a multiple (i.e. I went through the whole list) then
+      # something's messed up
+      if g mod begin = 0 then
+         Print("Improperly formed generators (g = ", g, "):\n");
+         genit := Iterator(sg!.generators);
+         for g in genit do
+            Print (g, " ");
+         od;
+         Print ("\nGCD: ", sg!.thegcd, "\n");
+         return;
+      fi;
+#     Now find the actual semigroup
+      addto := 0;
+      sg!.aset := Set([0]);
+      # so here I'm just looping through the elements as they're added and 
+      # adding each of the generators to them in order
+      while addto < bound do
+         for g in sg!.generators do
+            AddSet (sg!.aset, addto + g);
+         od;
+         setit := Position (sg!.aset, addto);
+         addto := sg!.aset[setit + 1];
+      od;
+    
+      # finally I want to call to find the generator from this set of elements
+      # which I know to be in the semigroup
+      NSGIfindSemiGroupFromSet (sg);
+   end
+);
+# finds the semigroup from a set of elements that I know to be in the semigroup
+InstallMethod(NSGIfindSemiGroupFromSet, "finds semigroup from set",
+   [IsNumericalSemigroup],
+   function (sg)
+      local minspan, it, count, prevValue, count2, deit;
+      # This function should never be called from an empty set:
+      if Length(sg!.aset) = 0 then
+         Print ("NSGIfindSemiGroupFromSet:\n",
+                "called with empty set\n");
+         return;
+      fi;
+      # if there's only 1 elements and it's 0, I know what's going on
+      if Length(sg!.aset) = 1 then
+         if sg!.aset[1] = 0 then
+            sg!.elements := Set([0]);
+            sg!.generators := Set([1]);
+            sg!.frobenius := -1;
+            return;
+         else
+            # something weird has happened
+            Print ("NSGIfindSemiGroupFromSet:\n", 
+                   "I am unhappy...  length of aset is 1 ",
+                   "but 0 is not only element\n");
+            return;
+         fi;
+      fi;
+      
+      it := Iterator (sg!.aset);
+      NextIterator (it);
+      minspan := sg!.aset[2];
+      if minspan = 1 then
+         sg!.elements := Set ([0]);
+         sg!.generators := Set([1]);
+         sg!.frobenius := -1;
+         return ;
+      fi;
+      sg!.elements := Set([]);
+      prevValue := sg!.aset[1];
+      count := 1;
+      count2 := -1;
+      AddSet (sg!.elements, prevValue);
+      # Here what I do is go through the whole set, looking for a span of
+      # minspan consecutive integers, because that indicates that I've gone past
+      # the frobenius number
+      for deit in sg!.aset do
+         AddSet (sg!.elements, deit);
+         # consecutive integers:
+         if prevValue + 1 = deit then
+            count := count + 1;
+            if count = 2 then
+               # store the second integer of a list of consecutive integers
+               count2 := deit;
+            fi;
+         else
+            # otherwise reset the count
+            count := 1 ;
+         fi;
+         
+         # we've counted far enough:
+         if count = minspan then
+            # truncate the set
+            sg!.aset := sg!.aset{[1..Position(sg!.aset, deit)-1]};
+            break;
+         fi;
+         prevValue := deit;
+      od;
+      # the frobenius is the last number of a span of minspan elements - minspan
+      sg!.frobenius := deit - minspan;
+      # truncate the set of elements to one past the frobenius number
+      sg!.elements := sg!.elements {[1..Position(sg!.elements, count2)-1]};
+      # clearly I have now calculated the semigroup
+      sg!.sg_calc := true;
+   end
+);
+# the most complicated function, here I find the set of generators
+InstallMethod (NSGIfindGenerators, "finds generators: nasty function",
+   [IsNumericalSemigroup],
+   function (sg)
+      local s, it, gen, it3, it2, deit;
+      # I need the semigroup to be calculated first
+      if not sg!.sg_calc then
+         NSGIfindSemiGroup (sg);
+      fi;
+      # avoid redundancy
+      if sg!.g_calc or Length(sg!.elements) = 0 then
+         return;
+      fi;
+      # the easy case: <1>
+      if Length(sg!.elements) = 1 then
+         sg!.generators := Set([1]);
+         sg!.g_calc := true;
+         return;
+      fi;
+      # strategy: build a new semigroup and add generators until it matches
+      s := NSG([]);
+      it := Iterator (sg!.elements);
+      sg!.generators := Set([]);
+      ##############################
+      gen := Set([]) ;
+      it := 1 ;
+      NSGAddGenerator (s, sg[1]) ;
+      AddSet (gen, sg[1]) ;
+      while not NSGIIsEqual (sg, s) do
+         while sg[it] in s do
+            it := it + 1 ;
+         od ;
+         NSGAddGenerator (s, sg[it]) ;
+         AddSet (gen, sg[it]) ;
+      od ;
+      it := Gcd (gen) ;
+      sg!.thegcd := it ;
+      for it2 in gen do
+         AddSet (sg!.generators, it2 / it) ;
+      od ;
+      sg!.g_calc := true ;
+      return ;
+      ##############################
+      NextIterator(it);
+      deit := NextIterator (it) ;
+      # add the first non-zero element, * the gcd
+      NSGAddGenerator (s, deit * sg!.thegcd);
+      # and while I'm at it, I go ahead and add what I'm adding to the new 
+      # semigroup to my list of generators
+      AddSet (sg!.generators, deit * sg!.thegcd);
+      gen := deit * sg!.thegcd ;
+      # this test should be redundant.  If this shows up, let me know, tell me
+      # what you were testing on
+      if gen = 1 then
+         sg!.g_calc := true;
+         Print ("Test not redundant!\n");
+         Print (sg) ;
+         return;
+      fi;
+      it3 := gen / sg!.thegcd;
+      # Here I find the next generator
+      while not IsDoneIterator (it) and (deit * sg!.thegcd) mod gen = 0 do
+         it3 := deit;
+         deit := NextIterator (it);
+      od;
+     
+      if IsDoneIterator (it) and deit mod gen = 0 then
+         it3 := deit;
+         while (it3 * sg!.thegcd) mod gen = 0 do
+            it3 := it3 + 1;
+         od;
+         NSGAddGenerator (s, it3 * sg!.thegcd);
+         AddSet (sg!.generators, it3 * sg!.thegcd);
+      else
+         NSGAddGenerator (s, deit * sg!.thegcd);
+         AddSet (sg!.generators, deit * sg!.thegcd);
+      fi;
+#Print("DEBUG:: entering loop 1\n");
+      NSGIfindSemiGroup (s);
+      while s!.frobenius <> (sg!.frobenius * sg!.thegcd) or 
+            not NSGIIsEqual (s, sg) do
+         if IsDoneIterator (it) then
+            break;
+         fi;
+         deit := NextIterator (it);
+         while not IsDoneIterator (it) 
+               and NSGIsElement (s, deit * sg!.thegcd) do
+            deit := NextIterator (it);
+         od;
+# had been not here
+         if IsDoneIterator (it) and NSGIsElement (s, deit*sg!.thegcd) then
+            break;
+         fi;
+         NSGAddGenerator (s, deit * sg!.thegcd);
+         AddSet(sg!.generators, deit * sg!.thegcd);
+         NSGIfindSemiGroup (s);
+      od;
+      it2 := sg!.frobenius;
+ 
+#Print("DEBUG:: entering loop 2\nNSGIIsEqual: ", NSGIIsEqual(s, sg), "\n");
+#Print("sf: ", s!.frobenius, "\nsgf: ", sg!.frobenius, "\n");
+      while not NSGIIsEqual (s, sg) do
+         it2 := it2 + 1;
+         while NSGIsElement (s, it2 * sg!.thegcd) do
+            it2 := it2 + 1;
+         od;
+         NSGAddGenerator (s, it2 * sg!.thegcd);
+         AddSet (sg!.generators, it2 * sg!.thegcd);
+         NSGIfindSemiGroup (s);
+      od;
+#Print("DEBUG::: s:", s, "\n");
+      s:=Set([]);
+      for it2 in sg!.generators do
+         AddSet (s, it2 / Gcd(sg!.generators));
+      od;
+      sg!.thegcd := Gcd (sg!.generators);
+      sg!.generators := ShallowCopy (s);
+ 
+      sg!.g_calc := true;
+   end
+);
+InstallMethod (NSGg, "returns frobenius value",
+   [IsNumericalSemigroup],
+   function (s)
+      if s!.frobenius < 0 then return -1; fi;
+      return s!.frobenius * s!.thegcd;
+   end
+);
+InstallMethod (NSGL, "makes it L", 
+   [IsNumericalSemigroup],
+   function (s)
+      return NSGL (s, 1) ;
+   end
+) ;
+InstallMethod (NSGL, "returns L[i](S)",
+   [IsNumericalSemigroup, IsPosInt],
+   function (sg, i)
+      local l ;
+      l := NSGICopy (sg) ;
+      while i > 0 do
+         l := NSGIL (l) ;
+         i := i - 1 ;
+      od ;
+      return l ;
+   end
+) ;
+InstallMethod (NSGIL, "internal helper to make it L",
+   [IsNumericalSemigroup],
+   function (s)
+      local it, g1, newlist, i, sg;
+      sg:=NSGICopy(s);
+      if not sg!.g_calc then
+         NSGIfindGenerators (sg);
+      fi;
+      g1 := sg!.generators[1];
+      newlist := Set([g1]);
+      for i in sg!.generators{[2..Length(sg!.generators)]} do
+         AddSet (newlist, i - g1);
+      od;
+      sg!.generators := ShallowCopy (newlist);
+      sg!.g_calc := false;
+      sg!.sg_calc := false;
+      NSGIfindSemiGroup (sg);
+      NSGIfindGenerators (sg);
+      return sg;
+   end
+);
+InstallMethod (NSGLChain, "returns a list of L[1](S) ... ",
+   [IsNumericalSemigroup],
+   function (sg)
+      local list, b, index;
+      index := 1;
+      b:=NSGICopy (sg);
+      list := [] ;
+      while b!.frobenius > 0 do
+         b := NSGL(b);
+         list[index] := b;
+         index := index + 1;
+      od;
+      return list;
+   end
+);
+InstallMethod (NSGCompareBL, "compares B to L for subsetness",
+   [IsNumericalSemigroup],
+   function (sg)
+      local b, l, index ;
+      index := 1 ;
+      b := NSGICopy (sg) ;
+      l := NSGL(sg) ;
+      while NSGg(l) > 0 do
+         b := NSGB(b);
+         Print ("B[", index, "](");
+         View(sg);
+         Print (") = ");
+         View(b);
+         Print ("\n");
+         if NSGIsSubset (b, l) then
+            Print ("is a subset of\n");
+         else
+            Print ("is NOT a subset of\n");
+            Print ("L[", index, "](");
+            View (sg);
+            Print (") = ");
+            View (l);
+            Print ("\n\n");
+            return index ;
+         fi;
+         Print ("L[", index, "](");
+         View (sg);
+         Print (") = ");
+         View (l);
+         Print ("\n\n");
+         index := index + 1;
+         l := NSGL(l);
+      od;
+      return -1 ;
+   end
+);
+InstallMethod (NSGCompareBL, "compares B[i](S) to L[i](S)",
+   [IsNumericalSemigroup, IsPosInt],
+   function (sg, i)
+      local b, l, ss ;
+      b := NSGB (sg, i) ;
+      l := NSGL (sg, i) ;
+      Print ("B[", i, "](") ;
+      View (sg) ;
+      Print (") = ") ;
+      View (b) ;
+      Print ("\n") ;
+      ss := NSGIsSubset (b, l) ;
+      if ss then
+         Print ("is a subset of\n") ;
+      else
+         Print ("is NOT a subset of\n") ;
+      fi;
+      Print ("L[", i, "](") ;
+      View (sg) ;
+      Print (") = ") ;
+      View (l) ;
+      Print ("\n\n") ;
+      return ss ;
+   end
+) ;
+InstallMethod (NSGB, "returns B(S)",
+   [IsNumericalSemigroup],
+   function (sg)
+      return NSGB(sg, 1) ;
+   end
+) ;
+InstallMethod (NSGB, "returns B[i](S)",
+   [IsNumericalSemigroup, IsPosInt],
+   function (sg, i)
+      local b ;
+      b := NSGICopy (sg) ;
+      while i > 0 do
+         b := NSGIB (b) ;
+         i := i - 1 ;
+      od ;
+      return b ;
+   end 
+) ;
+InstallMethod (NSGIB, "internal helper to make it B",
+   [IsNumericalSemigroup],
+   function (s)
+      local r, g, deg, sg;
+      sg:=NSGICopy(s);
+      if not sg!.sg_calc then
+         NSGIfindSemiGroup (sg);
+      fi;
+      g := Iterator (sg!.generators);
+      deg := NextIterator (g);
+      if 1 = deg then
+         return sg;
+      fi;
+      for r in [0..sg!.frobenius*sg!.thegcd] do
+         if NSGIsElement (sg, r) then
+            AddSet (sg!.aset, r/sg!.thegcd);
+            continue;
+         fi;
+         AddSet (sg!.aset, r/sg!.thegcd);
+         for g in sg!.generators do
+            if not NSGIsElement (sg, r + g*sg!.thegcd) then
+               RemoveSet (sg!.aset, r/sg!.thegcd);
+               break;
+            fi;
+         od;
+      od;
+      sg!.g_calc := false;
+      NSGIfindSemiGroupFromSet (sg);
+      NSGIfindGenerators (sg);
+      return sg;
+   end
+);
+InstallMethod (NSGBChain, "returns a list of B[1](S) ... ",
+   [IsNumericalSemigroup],
+   function (sg)
+      local list, b, index;
+      index := 1;
+      list := [] ;
+      b:=NSGICopy (sg);
+      while b!.frobenius > 0 do
+         b := NSGB(b);
+         list[index] := b;
+         index := index + 1;
+      od;
+      return list;
+   end
+);
+InstallMethod (NSGS, "returns S(i)",
+   [IsNumericalSemigroup, IsInt],
+   function (sg, i)
+      local s, e, els ;
+      # if not 0 <= i <= n(sg), then just return sg
+      if i < 0 or i > NSGn(sg) then
+         return sg ;
+      fi ;
+ 
+      # because I can't deal with sg[0] correctly, but S(0) is S,
+      if i = 0 then
+         return sg ;
+      fi; 
+      els := Set ([]) ;
+      AddSet (els, 0) ;
+      for e in sg!.elements do
+         if e >= sg[i] then
+            AddSet (els, e) ;
+         fi ;
+      od ;
+      s := NSG (els) ;
+      return NSGB(s) ;
+   end
+) ;
+InstallMethod (NSGSChain, "returns (T[i](S)), 1 <= i <= n(S)",
+   [IsNumericalSemigroup],
+   function (sg)
+      local i, ts ;
+      ts := [] ;
+      for i in [1..NSGn(sg)] do
+         ts[i] := NSGS(sg, i) ;
+      od ;
+      return ts ;
+   end
+) ;
+InstallMethod (NSGTypeSequence, "returns (T[i](S)), 1 <= i <= n(S)",
+   [IsNumericalSemigroup],
+   function (sg)
+      local i, ts ;
+      ts := [] ;
+      for i in [1..NSGn(sg)] do
+         ts[i] := NSGT(sg, i) ;
+         #ts[i] := NSGT(NSGS(sg, i)) ;
+      od ;
+      return ts ;
+   end
+) ;
+InstallMethod (NSGtypesequence, "returns (t[i](S)), 1 <= i <= n(S)",
+   [IsNumericalSemigroup],
+   function (sg)
+      local i, ts ;
+      ts := [] ;
+      for i in [1..NSGn(sg)] do
+         ts[i] := NSGt(sg, i) ;
+         #ts[i] := NSGt(NSGS(sg, i)) ;
+      od ;
+      return ts ;
+   end
+) ;
+InstallMethod (NSGIIsEqual, "two semigroups have same elements",
+   [IsNumericalSemigroup, IsNumericalSemigroup],
+   function (sg1, sg2)
+      return NSGIsSubset (sg1, sg2) and NSGIsSubset (sg2, sg1);
+   end
+);
+InstallMethod (NSGIsSubset, "subset?",
+   [IsNumericalSemigroup, IsNumericalSemigroup],
+   function (sg, s1)
+      local it, deit, l;
+    #  if sg!.frobenius * sg!.thegcd < s1!.frobenius then
+      if sg!.frobenius *sg!.frobenius < s1!.frobenius * s1!.frobenius then
+         return false;
+      fi;
+      if not sg!.sg_calc then
+         NSGIfindSemiGroup (sg);
+      fi;
+      for deit in sg!.elements do
+         if not NSGIsElement (s1, deit * sg!.thegcd) then
+            return false;
+         fi;
+      od;
+      l := sg!.frobenius + 1;
+      if (l * sg!.thegcd) <= s1!.frobenius then
+         return false;
+      fi;
+      return true;
+   end 
+);
+#################################
+# Not sure what work needs to be done here, consult the definitions
+InstallMethod (NSGT, "returns T[i](S)",
+   [IsNumericalSemigroup, IsInt],
+   function (sg, index)
+      local i, s, si, si1 ;
+      si := NSGS(sg, index) ;
+      si1 := NSGS(sg, index-1) ;
+      s := [] ;
+      for i in si!.elements do
+         if not i in si1 then
+            AddSet (s, i) ;
+         fi ;
+      od ;
+      for i in [si!.frobenius + 2..si1!.frobenius] do
+         if not i in si1 then
+            AddSet (s, i) ;
+         fi ;
+      od ;
+      return s ;
+   end
+) ;
+InstallMethod (NSGT, "returns T(S) = B(S) \ S",
+   [IsNumericalSemigroup],
+   function (sg)
+      return NSGT(sg, 1) ;
+      #local b, s, i ;
+      #b := NSGB(sg) ;
+      #s := [] ;
+      #for i in b!.elements do
+         #if not NSGIsElement (sg, i) then
+            #AddSet (s, i) ;
+         #fi ;
+      #od ;
+      #for i in [b!.frobenius + 2..sg!.frobenius] do
+         #if not NSGIsElement (sg, i) then
+            #AddSet (s, i) ;
+         #fi ;
+      #od ;
+      #return s ;
+   end
+) ;
+InstallMethod (\in, "checks if an element is in a semigroup",
+   [IsInt, IsNumericalSemigroup],
+   function (e, s)
+      return NSGIsElement (s, e) ;
+   end
+) ;
+InstallMethod (\[\], "returns ith element",
+   [IsNumericalSemigroup, IsInt],
+   function (s, i)
+      if i <= NSGn(s) then
+         return s!.elements[i + 1] * s!.thegcd ;
+      fi ;
+      return (s!.frobenius + 1 + i - NSGn(s)) * s!.thegcd ;
+   end
+) ;
+InstallMethod (NSGt, "returns the type of S.. Card(B(S)\S)",
+   [IsNumericalSemigroup],
+   function (sg)
+      return Length (NSGT (sg)) ;
+   end
+);
+InstallMethod (NSGt, "returns the cardinality of T[i](S)",
+   [IsNumericalSemigroup, IsInt],
+   function (sg, i)
+      return Length (NSGT (sg, i)) ;
+   end
+) ;
+InstallMethod (NSGn, "returns n(S)",
+   [IsNumericalSemigroup],
+   function (sg)
+      return Length(sg!.elements) - 1 ;
+   end
+) ;
+InstallMethod (NSGIsSymm, "returns whether S is symmetric",
+   [IsNumericalSemigroup],
+   function (sg)
+      return NSGn(sg) = (sg!.frobenius + 1) / 2 ;
+   end
+);
+InstallMethod (NSGIsPseudoSymm, "returns whether S is pseudo-symmetric",
+   [IsNumericalSemigroup],
+   function (sg)
+      return NSGn(sg) = sg!.frobenius / 2 ;
+   end
+) ;
+InstallMethod (NSGIsTelescopic, "returns whether s is telescopic",
+   [IsNumericalSemigroup],
+   function (sg)
+      local i, j, d, a, gens ;
+      NSGIfindGenerators (sg) ;
+      if Length (sg!.generators) <= 2 then
+         return true ;
+      fi;
+      i := 2 ;
+      gens := [sg!.generators[1], sg!.generators[2]] ;
+      d := Gcd (gens) ;
+      a := NSG ([gens[1] / d, gens[2] / d]) ;
+      while i < Length (sg!.generators) do
+         i := i + 1 ;
+         AddSet (gens, sg!.generators[i]) ;
+         d := Gcd (gens) ;
+         if not NSGIsElement (a, sg!.generators[i] / d) then
+            return false ;
+         fi ;
+         a := NSG ([]) ;
+         for j in [1..i] do
+            AddGenerator (a, sg!.generators[j] / d) ;
+         od ;
+      od ;
+      return true ;
+   end
+) ;
+InstallMethod (ViewObj, "prints it neatly",
+   [IsNumericalSemigroup],
+   function (sg)
+      local i;
+      if sg!.thegcd > 1 then
+         Print(sg!.thegcd, " * ");
+      fi;
+      Print("<") ;
+      if Length(sg!.generators) = 0 then
+         Print(">");
+         return;
+      fi;
+      for i in [1..Length(sg!.generators)-1] do
+         Print(sg!.generators[i], ", ");
+      od;
+      Print(sg!.generators[Length(sg!.generators)], ">");
+   end
+);
+InstallMethod (PrintObj, "prints it with mess",
+   [IsNumericalSemigroup],
+   function (sg)
+      local i;
+      View(sg);
+      if sg!.thegcd = 1 then
+         #Print("\n", sg!.elements, "\n");
+         Print ("\n{");
+         for i in [1..Length(sg!.elements)-1] do
+            Print (sg!.elements[i], ", ");
+         od;
+         Print (sg!.elements[Length(sg!.elements)], " -->}\n");
+      else
+         Print("\n", sg!.thegcd, " * {");
+         for i in [1..Length(sg!.elements)-1] do
+            Print (sg!.elements[i], ", ");
+         od;
+         Print (sg!.elements[Length(sg!.elements)], " -->}\n");
+      fi;
+   end
+);
